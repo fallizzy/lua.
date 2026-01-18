@@ -1,9 +1,10 @@
+-- Kütüphaneleri Yükle
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
 local Window = Fluent:CreateWindow({
-    Title = "Ryuma Hub | Universal v1.0",
+    Title = "Ryuma Hub | v2.0 Protected",
     SubTitle = "by Gemini",
     TabWidth = 160,
     Size = UDim2.fromOffset(580, 460),
@@ -13,175 +14,172 @@ local Window = Fluent:CreateWindow({
 })
 
 local Tabs = {
+    Combat = Window:AddTab({ Title = "Combat (Aimbot)", Icon = "swords" }),
     Main = Window:AddTab({ Title = "Karakter", Icon = "user" }),
     Visuals = Window:AddTab({ Title = "Görsel (ESP)", Icon = "eye" }),
-    Misc = Window:AddTab({ Title = "Araçlar", Icon = "box" }),
+    Misc = Window:AddTab({ Title = "Araçlar & Koruma", Icon = "shield" }),
     Settings = Window:AddTab({ Title = "Ayarlar", Icon = "settings" })
 }
 
 local Options = Fluent.Options
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
 
--- --- ÖZELLİK FONKSİYONLARI ---
+-- --- YARDIMCI FONKSİYONLAR ---
 
--- Fullbright (Karanlığı Kaldır)
-local function toggleFullbright(state)
-    if state then
-        Lighting.Brightness = 2
-        Lighting.ClockTime = 14
-        Lighting.FogEnd = 100000
-        Lighting.GlobalShadows = false
-        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
-    else
-        Lighting.GlobalShadows = true -- Oyunu eski haline döndürmek zordur, genelde rejoin gerekir
-    end
-end
-
--- Spin (Mevlana Modu)
-local spinVelocity
-local function toggleSpin(state, speed)
-    if spinVelocity then spinVelocity:Destroy() end
-    if state and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        spinVelocity = Instance.new("BodyAngularVelocity")
-        spinVelocity.Name = "Spinbot"
-        spinVelocity.Parent = LocalPlayer.Character.HumanoidRootPart
-        spinVelocity.MaxTorque = Vector3.new(0, math.huge, 0)
-        spinVelocity.AngularVelocity = Vector3.new(0, speed, 0)
-    end
-end
-
--- ESP Yöneticisi
-local EspFolder = Instance.new("Folder", game.CoreGui)
-EspFolder.Name = "RyumaESP"
-local function updateESP(enableBox, enableName, enableTracer)
-    EspFolder:ClearAllChildren()
-    if not (enableBox or enableName or enableTracer) then return end
-
+-- En Yakın Oyuncuyu Bul (Aimbot İçin)
+local function getClosestPlayer()
+    local closestDist = math.huge
+    local target = nil
+    
     for _, plr in pairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            -- Kutu (Highlight)
-            if enableBox then
-                local hl = Instance.new("Highlight")
-                hl.Adornee = plr.Character
-                hl.FillTransparency = 0.5
-                hl.OutlineColor = Color3.fromRGB(255, 0, 0)
-                hl.FillColor = Color3.fromRGB(255, 0, 0)
-                hl.Parent = EspFolder
-            end
-            
-            -- İsim (BillboardGui)
-            if enableName then
-                local bg = Instance.new("BillboardGui")
-                bg.Adornee = plr.Character.Head
-                bg.Size = UDim2.new(0, 100, 0, 50)
-                bg.StudsOffset = Vector3.new(0, 2, 0)
-                bg.AlwaysOnTop = true
-                
-                local txt = Instance.new("TextLabel", bg)
-                txt.Size = UDim2.new(1, 0, 1, 0)
-                txt.BackgroundTransparency = 1
-                txt.TextColor3 = Color3.new(1, 1, 1)
-                txt.TextStrokeTransparency = 0
-                txt.Text = plr.Name
-                bg.Parent = EspFolder
+        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character:FindFirstChild("Humanoid").Health > 0 then
+            -- Takım Kontrolü (Varsa)
+            if Options.TeamCheck.Value and plr.Team == LocalPlayer.Team then continue end
+
+            local screenPos, onScreen = Camera:WorldToViewportPoint(plr.Character.HumanoidRootPart.Position)
+            local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+            local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+
+            if onScreen and dist < Options.FovRadius.Value then
+                if dist < closestDist then
+                    closestDist = dist
+                    target = plr.Character.HumanoidRootPart
+                end
             end
         end
     end
+    return target
 end
 
--- --- UI ELEMENTLERİ ---
+-- --- SEKMELER ---
 
--- Karakter Sekmesi
-Tabs.Main:AddSlider("WalkSpeed", {
-    Title = "Yürüme Hızı", Min = 16, Max = 300, Default = 16, Rounding = 0,
-    Callback = function(Value) if LocalPlayer.Character then LocalPlayer.Character.Humanoid.WalkSpeed = Value end end
-})
+-- >> COMBAT TAB <<
+local AimbotToggle = Tabs.Combat:AddToggle("Aimbot", { Title = "Aimbot (Kamera Kilidi)", Default = false })
+Tabs.Combat:AddToggle("TeamCheck", { Title = "Takım Arkadaşını Vurma", Default = true })
+Tabs.Combat:AddSlider("AimbotSmooth", { Title = "Smoothness (Yumuşaklık)", Min = 1, Max = 10, Default = 5, Description = "Düşük = Robot gibi, Yüksek = İnsan gibi." })
+Tabs.Combat:AddSlider("FovRadius", { Title = "FOV Çapı", Min = 50, Max = 800, Default = 150 })
 
-Tabs.Main:AddSlider("JumpPower", {
-    Title = "Zıplama Gücü", Min = 50, Max = 300, Default = 50, Rounding = 0,
-    Callback = function(Value) if LocalPlayer.Character then LocalPlayer.Character.Humanoid.JumpPower = Value end end
-})
-
-Tabs.Main:AddToggle("InfiniteJump", { Title = "Sınırsız Zıplama", Default = false }):OnChanged(function()
-    local connection
-    if Options.InfiniteJump.Value then
-        connection = game:GetService("UserInputService").JumpRequest:Connect(function()
-            if LocalPlayer.Character then LocalPlayer.Character.Humanoid:ChangeState("Jumping") end
-        end)
+-- Aimbot Döngüsü
+RunService.RenderStepped:Connect(function()
+    if Options.Aimbot.Value and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then -- Sağ Tık Basılıyken
+        local target = getClosestPlayer()
+        if target then
+            local currentCFrame = Camera.CFrame
+            local targetCFrame = CFrame.new(currentCFrame.Position, target.Position)
+            -- Yumuşak Geçiş (Legit görünmesi için)
+            Camera.CFrame = currentCFrame:Lerp(targetCFrame, 1 / Options.AimbotSmooth.Value)
+        end
     end
 end)
 
--- Görsel Sekmesi
-local EspBoxToggle = Tabs.Visuals:AddToggle("EspBox", { Title = "ESP Box (Kutu)", Default = false })
-local EspNameToggle = Tabs.Visuals:AddToggle("EspName", { Title = "ESP Name (İsim)", Default = false })
+-- >> MAIN TAB (KARAKTER) <<
+Tabs.Main:AddSlider("WalkSpeed", { Title = "Yürüme Hızı", Min = 16, Max = 200, Default = 16, Callback = function(v) if LocalPlayer.Character then LocalPlayer.Character.Humanoid.WalkSpeed = v end end })
+Tabs.Main:AddSlider("JumpPower", { Title = "Zıplama Gücü", Min = 50, Max = 300, Default = 50, Callback = function(v) if LocalPlayer.Character then LocalPlayer.Character.Humanoid.JumpPower = v end end })
 
--- ESP Döngüsü (Her saniye yeniler)
+-- Click TP (Ctrl + Sol Tık)
+local clickTP = false
+Tabs.Main:AddToggle("ClickTP", { Title = "Click TP (Ctrl + Click)", Default = false }):OnChanged(function() clickTP = Options.ClickTP.Value end)
+
+Mouse.Button1Down:Connect(function()
+    if clickTP and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        if Mouse.Target then
+            LocalPlayer.Character:MoveTo(Mouse.Hit.Position)
+        end
+    end
+end)
+
+-- >> VISUALS TAB (ESP) <<
+local EspEnabled = false
+local EspContainer = Instance.new("Folder", game.CoreGui)
+EspContainer.Name = "RyumaESP_v2"
+
+local function UpdateESP()
+    EspContainer:ClearAllChildren()
+    if not EspEnabled then return end
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+             -- Kutu
+             local hl = Instance.new("Highlight", EspContainer)
+             hl.Adornee = plr.Character
+             hl.FillTransparency = 0.5
+             hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+        end
+    end
+end
+
+Tabs.Visuals:AddToggle("ESP", { Title = "Player ESP", Default = false }):OnChanged(function()
+    EspEnabled = Options.ESP.Value
+    if not EspEnabled then EspContainer:ClearAllChildren() end
+end)
+
 task.spawn(function()
     while true do
-        if Options.EspBox.Value or Options.EspName.Value then
-            updateESP(Options.EspBox.Value, Options.EspName.Value, false)
-        else
-            EspFolder:ClearAllChildren()
-        end
+        if EspEnabled then UpdateESP() end
         task.wait(1)
     end
 end)
 
-Tabs.Visuals:AddToggle("Fullbright", { Title = "Fullbright (Karanlığı Sil)", Default = false }):OnChanged(function()
-    toggleFullbright(Options.Fullbright.Value)
+-- >> MISC / KORUMA TAB <<
+
+-- Anti-AFK (Server'ın atmasını engeller)
+Tabs.Misc:AddToggle("AntiAFK", { Title = "Anti-AFK (Atılmayı Önle)", Default = true }):OnChanged(function()
+    local bb = game:GetService("VirtualUser")
+    LocalPlayer.Idled:Connect(function()
+        bb:CaptureController()
+        bb:ClickButton2(Vector2.new())
+    end)
 end)
 
--- Araçlar Sekmesi
+-- FPS Booster (Doku Silici)
 Tabs.Misc:AddButton({
-    Title = "Rejoin Server (Tekrar Gir)",
+    Title = "🔥 FPS Booster (Dokuları Sil)",
+    Description = "PC kasıyorsa buna bas, oyun çamur olur ama FPS artar.",
     Callback = function()
-        game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer)
+        for _, v in pairs(workspace:GetDescendants()) do
+            if v:IsA("BasePart") and not v:IsA("MeshPart") then
+                v.Material = Enum.Material.SmoothPlastic
+                v.Reflectance = 0
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v:Destroy()
+            end
+        end
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
     end
 })
 
+-- Server Hop
 Tabs.Misc:AddButton({
-    Title = "Server Hop (Başka Sunucu)",
+    Title = "Server Hop (Sunucu Değiştir)",
     Callback = function()
-        -- Basit Server Hop mantığı
         local Http = game:GetService("HttpService")
         local TPS = game:GetService("TeleportService")
         local Api = "https://games.roblox.com/v1/games/"
         local _place = game.PlaceId
         local _servers = Api.._place.."/servers/Public?sortOrder=Asc&limit=100"
-        
         local function ListServers(cursor)
             local Raw = game:HttpGet(_servers .. ((cursor and "&cursor="..cursor) or ""))
             return Http:JSONDecode(Raw)
         end
-        
         local Server, Next; repeat
             local Servers = ListServers(Next)
             Server = Servers.data[math.random(1, #Servers.data)]
             Next = Servers.nextPageCursor
         until Server.playing < Server.maxPlayers and Server.id ~= game.JobId
-        
         TPS:TeleportToPlaceInstance(_place, Server.id, LocalPlayer)
     end
 })
 
-Tabs.Misc:AddToggle("Spinbot", { Title = "Spinbot (Dönme)", Default = false }):OnChanged(function()
-    if Options.Spinbot.Value then
-        toggleSpin(true, 50)
-    else
-        toggleSpin(false)
-    end
-end)
-
-
--- Ayarlar Kaydı
+-- Ayarlar
 SaveManager:SetLibrary(Fluent)
 InterfaceManager:SetLibrary(Fluent)
-SaveManager:IgnoreThemeSettings()
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(1)
-Fluent:Notify({ Title = "Ryuma Hub", Content = "Script başarıyla yüklendi!", Duration = 5 })
+Fluent:Notify({ Title = "Ryuma Hub v2", Content = "Script başarıyla yüklendi! Koruma Aktif.", Duration = 5 })
